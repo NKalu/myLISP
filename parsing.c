@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
               "                                                             \
               number : /-?[0-9]+/ ;                                         \
               operator : '+' | '-' | '*' | '/';                             \
-              expresiion: <number> | '(' <operator>  <exopression>+ ')';    \
+              expression: <number> | '(' <operator>  <expression>+ ')';    \
               phrase: /^/ <operator> <expression>+ /$/;                     \
               ",
               Number, Operator, Expression, Phrase);
@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
         
         /* attempt to parse user input */
         mpc_result_t r;
-        if (mpc_parse("<stdin>",input, Phrase, &r)){
+        if (mpc_parse("<stdin>", input, Phrase, &r)){
             mpc_ast_print(r.output);
             mpc_ast_delete(r.output);
         }else{

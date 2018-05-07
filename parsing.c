@@ -13,24 +13,88 @@
 
 #include "mpc.h"
 
-long eval_op(long x, char* op, long y){
-    if (strcmp(op, "+") == 0) {return x + y;}
-    if (strcmp(op, "-") == 0) {return x - y;}
-    if (strcmp(op, "*") == 0) {return x * y;}
-    if (strcmp(op, "/") == 0) {return x / y;}
-    return 0;
+/* declare lval(LISP value) struct */
+typedef struct{
+    int type;
+    long num;
+    int err;    
+} lval;
+
+/* create enumeration of possible lval types*/
+enum {LVAL_NUM, LVAL_ERR};
+
+/* enumeration of possible error values */
+enum {LERR_DIV_ZERO, LERR_BAD_OP, LERR_BAD_NUM}; 
+
+/* create a new number lval type */
+lval lval_num(long x){
+    lval v;
+    v.type = LVAL_NUM;
+    v.num = x;
+    return v;
 }
 
-long eval(mpc_ast_t* t){
+/* create a new error lval type */
+lval lval_err(int x){
+    lval v;
+    v.type = LVAL_ERR;
+    v.err = x;
+    return v;
+} 
+
+/* print an lval */
+void lval_print(lval v){
+    switch(v.type){
+
+        case(LVAL_NUM): 
+            printf("%li \n", v.num);
+            break;
+
+        case(LVAL_ERR):
+            if(v.err == LERR_DIV_ZERO){
+                printf("Divide By Zero Error \n");
+            }
+            else if(v.err == LERR_BAD_NUM){
+                printf("Invalid Number Error \n");
+            }
+            else if(v.err == LERR_BAD_OP){
+                printf("Invalid Operator Error \n");
+            }
+            else{
+                printf("Unknown Error \n");
+            }
+            break;
+    }
+} 
+
+
+lval eval_op(lval x, char* op, lval y){
+
+    if (x.type == LVAL_ERR){ return x;}
+    if (y.type == LVAL_ERR){ return y;}
+
+    if (strcmp(op, "+") == 0) {return lval_num(x.num + y.num);}
+    if (strcmp(op, "-") == 0) {return lval_num(x.num - y.num);}
+    if (strcmp(op, "*") == 0) {return lval_num(x.num * y.num);}
+    if (strcmp(op, "/") == 0) {
+        /* divide by zero error check */
+        return y.num == 0 ? lval_err(LERR_DIV_ZERO) : lval_num(x.num / y.num);
+    }
+    return lval_err(LERR_BAD_OP);
+}
+
+lval eval(mpc_ast_t* t){
 
     /* return numbers directly */
     if (strstr(t->tag, "number")){
-        return atoi(t->contents);
+        /* check for error in conversion */
+        errno = 0; 
+        long x = strtol(t->contents, NULL, 10);
+        return errno != ERANGE ? lval_num(x) : lval_err(LERR_BAD_NUM);
     }
 
     char* op = t->children[1]->contents;
-
-    long x = eval(t->children[2]);
+    lval x = eval(t->children[2]);
 
     /* iterate through remaining children */
     int i = 3;
@@ -62,7 +126,7 @@ int main(int argc, char** argv) {
               Number, Operator, Expression, Phrase);
     
     /* Print Version and Exit info */
-    puts("NnamLISP Version  0.0.0.2");
+    puts("NnamLISP Version  0.0.0.3");
     puts("Press CTRL+C to Exit \n");
     
     while(1){
@@ -75,8 +139,8 @@ int main(int argc, char** argv) {
         /* attempt to parse user input */
         mpc_result_t r;
         if (mpc_parse("<stdin>", input, Phrase, &r)){
-            long result = eval(r.output);
-            printf("%li\n", result);
+            lval result = eval(r.output);
+            lval_print(result);
             mpc_ast_delete(r.output);
         }else{
             mpc_err_print(r.error);

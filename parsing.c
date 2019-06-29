@@ -30,6 +30,7 @@ typedef struct lval {
 enum {LVAL_ERR, LVAL_NUM, LVAL_SYM, LVAL_SEXPRE};
 
 void lval_print(lval* v);
+lval* lval_eval(lval* v);
 /* Contstruct pointer to Number lval */
 lval* lval_num(long x){
     lval* v = malloc(sizeof(lval));
@@ -147,45 +148,108 @@ void lval_println(lval* v){
     putchar('\n');
 }
 
+lval* lval_pop(lval* v, int i){
+    /* find item at index i */
+    lval* x = v->cell[i];
 
-// lval eval_op(lval x, char* op, lval y){
+    /*shift memory after index */
+    memmove(&v->cell[i], &v->cell[i+1], 
+        sizeof(lval*) * (v->count - i - 1)); 
 
-//     if (x.type == LVAL_ERR){ return x;}
-//     if (y.type == LVAL_ERR){ return y;}
+    v->count--;
 
-//     if (strcmp(op, "+") == 0) {return lval_num(x.num + y.num);}
-//     if (strcmp(op, "-") == 0) {return lval_num(x.num - y.num);}
-//     if (strcmp(op, "*") == 0) {return lval_num(x.num * y.num);}
-//     if (strcmp(op, "/") == 0) {
-//         /* divide by zero error check */
-//         return y.num == 0 ? lval_err(LERR_DIV_ZERO) : lval_num(x.num / y.num);
-//     }
-//     return lval_err(LERR_BAD_OP);
-// }
+    /* reallocate used memory */
+    v->cell = realloc(v->cell, sizeof(lval*) * v->count);
+    return x;
+}
 
-// lval eval(mpc_ast_t* t){
+lval* lval_take(lval* v, int i){
+    lval* x = lval_pop(v, i);
+    lval_del(v);
+    return x;
+}
 
-//     /* return numbers directly */
-//     if (strstr(t->tag, "number")){
-//         /* check for error in conversion */
-//         errno = 0; 
-//         long x = strtol(t->contents, NULL, 10);
-//         return errno != ERANGE ? lval_num(x) : lval_err(LERR_BAD_NUM);
-//     }
+lval* builtin_op(lval* l, char* op){
 
-//     char* op = t->children[1]->contents;
-//     lval x = eval(t->children[2]);
+    for(int i = 0; i < l->count; i++){
+        if (l->cell[i]->type != LVAL_NUM){
+            lval_del(l);
+            return lval_err("Can only operate on numbers");
+        }
+    }
 
-//     /* iterate through remaining children */
-//     int i = 3;
-//     while (strstr(t->children[i]->tag, "expression")){
-//         x = eval_op(x, op, eval(t->children[i]));
-//         i++;
-//     }
 
-//     return x;
+    /* get first element */
+    lval* x = lval_pop(l, 0);
 
-// }
+    /* if only on numer, just make negative if subtraction */
+    if((strcmp(op, "-") == 0) && l->count == 0){
+        x->num = -x->num;
+    }
+
+    while(l->count > 0){
+
+        lval* y = lval_pop(l, 0);
+
+        if (strcmp(op, "+") == 0) { x->num += y->num ;}
+        if (strcmp(op, "-") == 0) { x->num -= y->num ;}
+        if (strcmp(op, "*") == 0) { x->num *= y->num ;}
+        if (strcmp(op, "/") == 0) { 
+            if (y->num == 0){
+                lval_del(x);
+                lval_del(y);
+                x = lval_err("Division By Zero Error");
+                break;
+            }
+            x->num /= y->num; 
+        }
+
+        lval_del(y);
+    }
+
+    lval_del(l);
+    return x;
+}
+
+lval*  lval_eval_sexpre(lval* v){
+
+    /* eval children */
+    for (int i = 0; i < v -> count; i++){
+        v->cell[i] = lval_eval(v->cell[i]);
+    }
+
+    /* error check */
+    for (int i = 0; i < v->count; i++){
+        if (v->cell[i]->type == LVAL_ERR){ return lval_take(v, i); }
+    }
+
+    /* empty */
+    if (v->count == 0){return v;}
+
+    /* ensure first element is symbol */
+    lval* f = lval_pop(v, 0);
+
+    if (f->type != LVAL_SYM){
+        lval_del(f); 
+        lval_del(v);
+        return lval_err("S-Expression must begin with symbol");
+    }
+
+    /* call with builtin with operator */
+    lval* result = builtin_op(v, f->sym);
+    lval_del(f);
+    return result;
+
+}
+
+lval* lval_eval(lval* v){
+    /* evaluate s expression*/
+    if (v->type == LVAL_SEXPRE){
+        return lval_eval_sexpre(v);
+    }
+
+    return v;
+}
 
 int main(int argc, char** argv) {
     
@@ -203,12 +267,12 @@ int main(int argc, char** argv) {
               symbol     : '+' | '-' | '*' | '/';                                \
               sexpression: '(' <expression>* ')';                                \
               expression : <number> | <symbol>|  <sexpression>+ ')';             \
-              phrase     : /^/ <operator> <expression>+ /$/;                     \
+              phrase     : /^/ <expression>* /$/;                                \
               ",
               Number, Symbol, Sexpression, Expression, Phrase);
     
     /* Print Version and Exit info */
-    puts("NnamLISP Version  0.0.0.3");
+    puts("NnamLISP Version  0.0.0.4");
     puts("Press CTRL+C to Exit \n");
     
     while(1){
@@ -220,16 +284,16 @@ int main(int argc, char** argv) {
         
         /* attempt to parse user input */
         mpc_result_t r;
-        lval* x = lval_read(r.output);
-        lval_println(x);
-        lval_del(x);
-        // if (mpc_parse("<stdin>", input, Phrase, &r)){
-        //     // lval result = eval(r.output);
-            
-        // }else{
-        //     mpc_err_print(r.error);+
-        //     mpc_err_delete(r.error);
-        // }
+        
+        if (mpc_parse("<stdin>", input, Phrase, &r)){
+            lval* x = lval_eval(lval_read(r.output));
+            lval_println(x);
+            lval_del(x);
+            mpc_ast_delete(r.output);
+        }else{
+            mpc_err_print(r.error);
+            mpc_err_delete(r.error);
+        }
         
         free(input);
     }

@@ -13,6 +13,9 @@
 
 #include "mpc.h"
 
+#define LASSERT(args, cond, err) \
+    if( !(cond) ) { lval_del(args); return lval_err(err); }
+
 /* declare lval(LISP value) struct */
 typedef struct lval {
     int type;
@@ -31,6 +34,7 @@ enum {LVAL_ERR, LVAL_NUM, LVAL_SYM, LVAL_SEXPRE, LVAL_QEXPRE};
 
 void lval_print(lval* v);
 lval* lval_eval(lval* v);
+lval* builtin(lval* l, char* fun);
 
 /* Contstruct pointer to Number lval */
 lval* lval_num(long x){
@@ -185,6 +189,16 @@ lval* lval_take(lval* v, int i){
     return x;
 }
 
+lval* lval_join(lval* x, lval* y){
+    while(y->count){
+        x = lval_add(x, lval_pop(y, 0));
+    }
+
+    /* delete empty Y and return X */
+    lval_del(y);
+    return x;
+}
+
 lval* builtin_op(lval* l, char* op){
 
     for(int i = 0; i < l->count; i++){
@@ -227,6 +241,82 @@ lval* builtin_op(lval* l, char* op){
     return x;
 }
 
+lval* builtin_first(lval* l){
+    /* check to make sure not too many args */
+    LASSERT(l, l->count == 1,
+        "Too many args passed to 'first'");
+    /* check for qexpre */
+    LASSERT(l, l->cell[0]->type == LVAL_QEXPRE,
+        "Incorrect type passed to 'first'");
+    /* check if empty */
+    LASSERT(l, l->cell[0]->count != 0,
+        "Empty q-expression passed to 'first'");
+
+    /* take first arg */
+    lval* v = lval_take(l, 0);
+    /* delete everything else */
+    while(v->count > 1){ 
+        lval_del(lval_pop(v, 1));
+    }
+
+    return v;
+}
+
+lval* builtin_last(lval* l){
+     /* check to make sure not too many args */
+    LASSERT(l, l->count == 1,
+        "Too many args passed to 'last'");
+    /* check for qexpre */
+    LASSERT(l, l->cell[0]->type == LVAL_QEXPRE,
+        "Incorrect type passed to 'last'");
+    /* check if empty */
+    LASSERT(l, l->cell[0]->count != 0 ,
+        "Empty q-expression passed to 'last'");
+
+    /* take first arg */
+    lval* v = lval_take(l, 0);
+    /* delete first element */
+    lval_del(lval_pop(v, 0));
+
+    return v;
+}
+
+lval* builtin_list(lval* l){
+    l->type = LVAL_QEXPRE;
+    return l;
+}
+
+lval* builtin_eval(lval* l){
+     /* check to make sure not too many args */
+    LASSERT(l, l->count == 1,
+        "Too many args passed to 'eval'");
+    /* check for qexpre */
+    LASSERT(l, l->cell[0]->type == LVAL_QEXPRE,
+        "Incorrect type passed to 'eval'");
+
+    /* tkae first arg, convert to s-expression and evaluate */
+    lval* x = lval_take(l, 0);
+    x->type = LVAL_SEXPRE;
+    return lval_eval(x);
+}
+
+lval* builtin_join(lval* l){
+    /* check that everything is a q-expression */
+    for(int i = 0; i < l->count; i++){
+        LASSERT(l, l->cell[i]->type == LVAL_QEXPRE, 
+            "Incorrect type passed to 'join'");
+    }
+
+    lval* x = lval_pop(l, 0);
+
+    while(l->count){
+        x = lval_join(x, lval_pop(l, 0));
+    }
+
+    lval_del(l);
+    return x;
+}
+
 lval* lval_eval_sexpre(lval* v){
 
     /* eval children */
@@ -255,7 +345,7 @@ lval* lval_eval_sexpre(lval* v){
     }
 
     /* call with builtin with operator */
-    lval* result = builtin_op(v, f->sym);
+    lval* result = builtin(v, f->sym);
     lval_del(f);
     return result;
 
@@ -268,6 +358,19 @@ lval* lval_eval(lval* v){
     }
 
     return v;
+}
+
+lval* builtin(lval* l, char* fun){
+    if(strcmp("last",  fun) == 0) { return builtin_last(l); }
+    if(strcmp("first", fun) == 0) { return builtin_first(l); }
+    if(strcmp("list",  fun) == 0) { return builtin_list(l); }
+    if(strcmp("join",  fun) == 0) { return builtin_join(l); }
+    if(strcmp("eval",  fun) == 0) { return builtin_eval(l); }
+    if(strcmp("eval",  fun) == 0) { return builtin_eval(l); }
+    if(strcmp("+-/*",  fun) == 0) { return builtin_op(l, fun); }
+    lval_del(l);
+
+    return lval_err("Call to undefined function");
 }
 
 int main(int argc, char** argv) {
@@ -284,7 +387,8 @@ int main(int argc, char** argv) {
     mpca_lang(MPCA_LANG_DEFAULT,
               "                                                                                 \
               number     : /-?[0-9]+/ ;                                                         \
-              symbol     : '+' | '-' | '*' | '/' ;                                              \
+              symbol     : \"last\" | \"join\" | \"first\" | \"list\" |                         \
+                            \"eval\" | '+' | '-' | '*' | '/' ;                                  \
               sexpression: '(' <expression>* ')' ;                                              \
               qexpression: '{' <expression>* '}' ;                                              \
               expression : <number> | <symbol> | <sexpression> | <qexpression> ;                \
@@ -293,7 +397,7 @@ int main(int argc, char** argv) {
               Number, Symbol, Sexpression, Qexpression, Expression, Phrase);
     
     /* Print Version and Exit info */
-    puts("NnamLISP Version  0.0.0.4");
+    puts("NnamLISP Version  0.0.0.5");
     puts("Press CTRL+C to Exit \n");
     
     while(1){

@@ -242,6 +242,7 @@ lval* lval_eval_sexpre(lval* v){
     /* empty */
     if (v->count == 0){return v;}
 
+    /* single expression */
     if (v->count == 1) { return lval_take(v, 0); }
 
     /* ensure first element is symbol */

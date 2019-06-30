@@ -27,10 +27,11 @@ typedef struct lval {
 } lval;
 
 /* create enumeration of possible lval types*/
-enum {LVAL_ERR, LVAL_NUM, LVAL_SYM, LVAL_SEXPRE};
+enum {LVAL_ERR, LVAL_NUM, LVAL_SYM, LVAL_SEXPRE, LVAL_QEXPRE};
 
 void lval_print(lval* v);
 lval* lval_eval(lval* v);
+
 /* Contstruct pointer to Number lval */
 lval* lval_num(long x){
     lval* v = malloc(sizeof(lval));
@@ -66,6 +67,15 @@ lval* lval_sexpre(void){
     return v;
 }
 
+/* Contstruct pointer to QExpression lval */
+lval* lval_qexpre(void){
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_QEXPRE;
+    v->count = 0;
+    v->cell = NULL;
+    return v;
+}
+
 lval* lval_read_num(mpc_ast_t* t){
     errno = 0;
     long x = strtol(t->contents, NULL, 10);
@@ -88,11 +98,14 @@ lval* lval_read(mpc_ast_t* t){
     lval* x = NULL;
     if (strcmp(t->tag, ">") == 0) { x = lval_sexpre();}
     if (strstr(t->tag, "sexpression")) { x = lval_sexpre();}
+    if (strstr(t->tag, "qexpression")) { x = lval_qexpre();}
 
     /* Fill list with valid expressions */
     for (int i = 0; i < t->children_num; i++){
         if (strcmp(t->children[i]->contents, "(") == 0) {continue;}
         if (strcmp(t->children[i]->contents, ")") == 0) {continue;}
+        if (strcmp(t->children[i]->contents, "{") == 0) {continue;}
+        if (strcmp(t->children[i]->contents, "}") == 0) {continue;}
         if (strcmp(t->children[i]->tag,  "regex") == 0) {continue;}
         x = lval_add(x, lval_read(t->children[i]));
     }
@@ -110,6 +123,8 @@ void lval_del(lval* v){
         case LVAL_ERR: free(v->err); break;
         case LVAL_SYM: free(v->sym); break;
 
+        /* run for all in expression */
+        case LVAL_QEXPRE:
         case LVAL_SEXPRE:
             for (int i = 0; i < v->count; i++){
                 lval_del(v->cell[i]);
@@ -140,6 +155,7 @@ void lval_print(lval* v){
         case LVAL_ERR:    printf("Error: %s", v->err); break;
         case LVAL_SYM:    printf("%s", v->sym); break;
         case LVAL_SEXPRE: lval_expr_print(v, '(', ')'); break;
+        case LVAL_QEXPRE: lval_expr_print(v, '{', '}'); break;
     }
 } 
 
@@ -211,20 +227,22 @@ lval* builtin_op(lval* l, char* op){
     return x;
 }
 
-lval*  lval_eval_sexpre(lval* v){
+lval* lval_eval_sexpre(lval* v){
 
     /* eval children */
-    for (int i = 0; i < v -> count; i++){
+    for (int i = 0; i < v->count; i++){
         v->cell[i] = lval_eval(v->cell[i]);
     }
 
     /* error check */
     for (int i = 0; i < v->count; i++){
-        if (v->cell[i]->type == LVAL_ERR){ return lval_take(v, i); }
+        if (v->cell[i]->type == LVAL_ERR) { return lval_take(v, i); }
     }
 
     /* empty */
     if (v->count == 0){return v;}
+
+    if (v->count == 1) { return lval_take(v, 0); }
 
     /* ensure first element is symbol */
     lval* f = lval_pop(v, 0);
@@ -257,19 +275,21 @@ int main(int argc, char** argv) {
     mpc_parser_t* Number      = mpc_new("number");
     mpc_parser_t* Symbol      = mpc_new("symbol");
     mpc_parser_t* Sexpression = mpc_new("sexpression");
+    mpc_parser_t* Qexpression = mpc_new("qexpression");
     mpc_parser_t* Expression  = mpc_new("expression");
     mpc_parser_t* Phrase      = mpc_new("phrase");
     
     /* Defined as follows */
     mpca_lang(MPCA_LANG_DEFAULT,
-              "                                                                  \
-              number     : /-?[0-9]+/ ;                                          \
-              symbol     : '+' | '-' | '*' | '/';                                \
-              sexpression: '(' <expression>* ')';                                \
-              expression : <number> | <symbol>|  <sexpression>+ ')';             \
-              phrase     : /^/ <expression>* /$/;                                \
+              "                                                                                 \
+              number     : /-?[0-9]+/ ;                                                         \
+              symbol     : '+' | '-' | '*' | '/' ;                                              \
+              sexpression: '(' <expression>* ')' ;                                              \
+              qexpression: '{' <expression>* '}' ;                                              \
+              expression : <number> | <symbol> | <sexpression> | <qexpression> ;                \
+              phrase     : /^/ <expression>* /$/ ;                                              \
               ",
-              Number, Symbol, Sexpression, Expression, Phrase);
+              Number, Symbol, Sexpression, Qexpression, Expression, Phrase);
     
     /* Print Version and Exit info */
     puts("NnamLISP Version  0.0.0.4");
@@ -298,7 +318,7 @@ int main(int argc, char** argv) {
         free(input);
     }
     
-    mpc_cleanup(5, Number, Symbol, Sexpression, Expression, Phrase);
+    mpc_cleanup(6, Number, Symbol, Sexpression, Qexpression, Expression, Phrase);
     
     return 0;
 }
